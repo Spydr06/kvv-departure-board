@@ -7,4 +7,4 @@ Some KVV (Karlsruher Verkehrs Verbund) "EFA"-API tests for train schedules and i
 
 Using an HUB75 32x64 rbg display and an ESP32:
 
-![](./assets/departures-board.jpg)
+![](./assets/departure-board.jpg)
