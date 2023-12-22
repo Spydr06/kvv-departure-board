@@ -71,7 +71,7 @@ struct KVVResponse {
 async fn main() -> Result<(), reqwest::Error> {
     //let station_id = 7001530; 
     let station_id = 7000801;
-    let limit = 10;
+    let limit = 100;
     let request_url = format!("https://projekte.kvv-efa.de/sl3-alone/XSLT_DM_REQUEST?outputFormat=JSON&coordOutputFormat=WGS84[dd.ddddd]&depType=stopEvents&locationServerActive=1&mode=direct&name_dm={station_id}&type_dm=stop&useOnlyStops=1&useRealtime=1&limit={limit}");
 
     println!(">>> {:?}", request_url);
