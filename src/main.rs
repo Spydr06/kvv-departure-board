@@ -14,6 +14,8 @@ impl fmt::Display for KVVServingLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let number = match self.number.as_str() {
             "S4" => "S4".white().on_truecolor(102, 25, 36),
+            "S5" => "S5".black().on_truecolor(234, 165 ,100),
+            "S2" => "S2".white().on_truecolor(113, 66, 183),
             "RE 45" => "RE 45".white().on_truecolor(100, 100, 100),
             x => x.white()
         };
@@ -47,7 +49,8 @@ struct KVVResponse {
 
 #[tokio::main]
 async fn main() -> Result<(), reqwest::Error> {
-    let station_id = 7001530; 
+    //let station_id = 7001530; 
+    let station_id = 7000801;
     let request_url = format!("https://projekte.kvv-efa.de/sl3-alone/XSLT_DM_REQUEST?outputFormat=JSON&coordOutputFormat=WGS84[dd.ddddd]&depType=stopEvents&locationServerActive=1&mode=direct&name_dm={station_id}&type_dm=stop&useOnlyStops=1&useRealtime=1&limit=10");
 
     let response = reqwest::get(&request_url).await?.json::<KVVResponse>().await?;
