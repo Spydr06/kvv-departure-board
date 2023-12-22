@@ -1,6 +1,6 @@
 #![feature(let_chains)]
 
-use std::fmt;
+use std::{fmt, collections::HashSet};
 use colored::Colorize;
 
 #[derive(Debug, serde::Deserialize)]
@@ -24,19 +24,39 @@ impl fmt::Display for KVVServingLine {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct KVVInfoText {
+    subtitle: String
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct KVVLineInfo {
+    infoText: KVVInfoText
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct KVVLineInfos {
+    lineInfo: KVVLineInfo
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct KVVDeparture {
     stopName: String,
     countdown: String,
     platform: String,
     servingLine: KVVServingLine,
-
+    lineInfos: Option<KVVLineInfos>
 }
 
 impl fmt::Display for KVVDeparture {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "In {} ", self.countdown)?;
-        if let Some(delay) = &self.servingLine.delay && delay.ne("0") {
-            write!(f, "{}", format!("(+{}) ", delay).yellow())?;
+        if let Some(delay) = &self.servingLine.delay {
+            if(delay.eq("-9999")) {
+                write!(f, "{}", "** ".bright_red())?;
+            }
+            else if delay.ne("0") {
+                write!(f, "{}", format!("(+{}) ", delay).yellow())?;
+            }
         }
         write!(f, "min:\t(Gleis {})\t{}", self.platform, self.servingLine)
     }
@@ -51,15 +71,30 @@ struct KVVResponse {
 async fn main() -> Result<(), reqwest::Error> {
     //let station_id = 7001530; 
     let station_id = 7000801;
-    let request_url = format!("https://projekte.kvv-efa.de/sl3-alone/XSLT_DM_REQUEST?outputFormat=JSON&coordOutputFormat=WGS84[dd.ddddd]&depType=stopEvents&locationServerActive=1&mode=direct&name_dm={station_id}&type_dm=stop&useOnlyStops=1&useRealtime=1&limit=10");
+    let limit = 10;
+    let request_url = format!("https://projekte.kvv-efa.de/sl3-alone/XSLT_DM_REQUEST?outputFormat=JSON&coordOutputFormat=WGS84[dd.ddddd]&depType=stopEvents&locationServerActive=1&mode=direct&name_dm={station_id}&type_dm=stop&useOnlyStops=1&useRealtime=1&limit={limit}");
+
+    println!(">>> {:?}", request_url);
 
     let response = reqwest::get(&request_url).await?.json::<KVVResponse>().await?;
-    println!("{:#?}", response);
+    println!("<<< {:#?}", response);
 
     println!("Departures from {}:", response.departureList.first().unwrap().stopName);
-    for dep in response.departureList {
+    for dep in &response.departureList {
         println!("{}", dep);
     }
+
+    let line_infos = HashSet::<&String>::from_iter(
+        response.departureList.iter()
+            .filter_map(|i| i.lineInfos.as_ref())
+            .map(|i| &i.lineInfo.infoText.subtitle)
+        );
+    if line_infos.len() > 0 {
+        println!("Line Infos:");
+    }
+    for info in line_infos {
+        println!(">>> {}", info);
+    } 
 
     Ok(())
 }
