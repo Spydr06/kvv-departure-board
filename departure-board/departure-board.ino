@@ -3,6 +3,7 @@
 // #define WIFI_PASSWD "your-password"
 
 #include <WiFi.h>
+#include <Preferences.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
@@ -36,6 +37,8 @@ int32_t last_page_switch_time = 0;
 int32_t current_page = N_REQUESTED - 1;
 
 #define MAX_JSON_SIZE (N_REQUESTED * 5000)
+
+#define STATION_ID_ADDR 0
 
 MatrixPanel_I2S_DMA display;
  
@@ -167,7 +170,7 @@ struct KVVDeparture {
         display.setCursor(0, 0);
         display.setTextColor(white);
 
-        if(countdown == 0)
+        if(countdown <= 0)
             display.print("sofort");
         else
             display.print(countdown);
@@ -188,7 +191,7 @@ struct KVVDeparture {
         }
 
         display.setTextColor(white);
-        if(countdown)
+        if(countdown > 0)
             display.print(" min");
 
         display.setCursor(0, 8);
@@ -221,11 +224,14 @@ char request_url[250];
 KVVDeparture departure_list[N_REQUESTED] = {};
 bool redraw_departures = false;
 bool update_succesful = true;
+uint32_t station_id = 7000801;
 
-StaticJsonDocument<50000> doc;
+StaticJsonDocument<60000> doc;
+
+Preferences prefs;
 
 static bool update_departures(void) {
-    uint32_t station_id = 7000801;
+    Serial.printf("Requesting station %u...\n", station_id);
 
     memset(request_url, 0, sizeof(request_url));
     snprintf(request_url, sizeof(request_url) - 1, request_fmt, station_id, N_REQUESTED);
@@ -238,6 +244,7 @@ static bool update_departures(void) {
     if(response_code <= 0) {
         Serial.print("Error code: ");
         Serial.println(response_code);
+        snprintf(info_text, sizeof(info_text) - 1, "HTTP Error Code: %d", response_code);
         return false;
     }
 
@@ -250,6 +257,7 @@ static bool update_departures(void) {
     if(error) {
         Serial.print("Deserialization error: ");
         Serial.println(error.f_str());
+        snprintf(info_text, sizeof(info_text) - 1, "Deserialization Error: %s", error.c_str());
         return false;
     }
 
@@ -280,6 +288,7 @@ static void display_page_indicator(void) {
 }
 
 TaskHandle_t update_task_handle;
+
 static void update_task(void* _param) {
     for(;;) {
         if(millis() - last_page_switch_time > PAGE_SWITCH_INTERVAL) {
@@ -312,6 +321,15 @@ static void update_task(void* _param) {
     }
 }
 
+static void read_new_station_id(bool* request_update) {
+    if(Serial.available()) { 
+        station_id = atoi(Serial.readString().c_str());
+        prefs.putULong("station_id", station_id);
+        if(request_update)
+            *request_update = true;
+    }  
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -330,33 +348,44 @@ void setup() {
     Serial.print("connecting [");
 
     while(WiFi.status() != WL_CONNECTED) {
-        delay(10);
+        delay(100);
         Serial.print('.');
     }
     Serial.println(']');
     Serial.println(WiFi.localIP().toString());
 
+    prefs.begin("myPrefs", false);
+
+    if(prefs.isKey("station_id")) {
+        station_id = prefs.getULong("station_id");
+        Serial.printf("Recovered station_id %u.\n", station_id);
+    }
+
     display.clearScreen();
     display.setCursor(0, 0);
     display.write("updating...");
 
-    while(!update_departures());
+    while(!update_departures())
+        read_new_station_id(nullptr);
 
     xTaskCreatePinnedToCore(update_task, "update_task", 10000, NULL, 1, &update_task_handle, 1);
 
-    for(auto& dep : departure_list) {
+    for(auto& dep : departure_list)
         dep.dbg_print();
-    }
     Serial.printf("Info: %s\n", info_text);
     
     Serial.println("done.");
 }
 
 void loop() {
-    if(millis() - last_update_time > UPDATE_INTERVAL) {
+    static bool request_update = false;
+  
+    if(millis() - last_update_time > UPDATE_INTERVAL || request_update) {
         last_update_time = millis();
+        request_update = false;
         Serial.println("Updating...");
-        //while(!update_departures());
         update_succesful = update_departures();
     }
+
+    read_new_station_id(&request_update);
 }
