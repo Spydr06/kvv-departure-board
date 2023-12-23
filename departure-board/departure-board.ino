@@ -21,7 +21,7 @@
 
 #define N_REQUESTED 4
 
-#define SCROLL_INTERVAL 20
+#define SCROLL_INTERVAL 30
 
 int32_t scroll_offset = 0;
 int32_t last_scroll_time = 0;
@@ -63,10 +63,32 @@ const uint16_t white = display.color565(255, 255, 255);
 const uint16_t green = display.color565(50, 200, 50);
 const uint16_t red = display.color565(255, 100, 100);
 const uint16_t yellow = display.color565(246, 211, 45);
-const uint16_t s4_color = display.color565(160, 21, 60);
 const uint16_t grey = display.color565(150, 150, 150);
 const uint16_t dark_grey = display.color565(50, 50, 50);
 const uint16_t orange = display.color565(222, 123, 46);
+
+const uint16_t sbahn_colors[] = {
+    display.color565(0, 166, 110), // S1/S11
+    display.color565(159, 99, 169), // S2
+    display.color565(255, 220, 0), // S3
+    display.color565(160, 21, 60), // S4
+    display.color565(170, 89, 58), // S5
+    display.color565(37, 32, 104), // S6
+    display.color565(255, 241, 1), // S7/S71
+    display.color565(111, 106, 42), // S8/S81
+    display.color565(170, 89, 58) // S9
+};
+
+const uint16_t tram_colors[] = {
+    display.color565(238, 29, 35), // 1
+    display.color565(0, 112, 187), // 2
+    display.color565(147, 113, 56), // 3
+    display.color565(254, 202, 10), // 4
+    display.color565(20, 192, 242), // 5
+    display.color565(124, 193, 63), // 6
+    display.color565(0, 0, 0), // ----
+    display.color565(247, 147, 29), // 8
+};
 
 const char departure_dbg_print_fmt[] PROGMEM = "In %d (+%d) min.\t(Gleis %s)\t%s\tto %s\n";
 
@@ -80,6 +102,7 @@ static void replace_umlauts(char* str, size_t length) {
     s.replace("ä", "ae");
     s.replace("ö", "oe");
     s.replace("ü", "ue");
+    s.replace("ß", "ss");
     strncpy(str, s.c_str(), length);
 }
 
@@ -91,8 +114,10 @@ static void shorten_direction(char* str, size_t length) {
     s.replace("ä", "ae");
     s.replace("ö", "oe");
     s.replace("ü", "ue");
+    s.replace("ß", "ss");
     s.replace("Karlsruhe", "KA"); // "Karlsruhe" -> "KA"
     s.replace("Hauptbahnhof", "Hbf");
+    s.replace("ß", "ss");
     strncpy(str, s.c_str(), length);
 }
 
@@ -127,6 +152,17 @@ struct KVVDeparture {
         Serial.printf(departure_dbg_print_fmt, countdown, delay, platform, number, direction);
     }
 
+    uint16_t get_train_color() {
+        if(number[0] == 'S' && isdigit(number[1])) {
+            return sbahn_colors[number[1] - '1'];
+        }
+        else if(isdigit(number[0]) && number[1] == '\0') {
+            return tram_colors[number[0] - '1'];
+        }
+
+        return dark_grey;
+    }
+
     void show() {
         display.setCursor(0, 0);
         display.setTextColor(white);
@@ -156,16 +192,18 @@ struct KVVDeparture {
             display.print(" min");
 
         display.setCursor(0, 8);
-        
-        if(strcmp(number, "S4") == 0)
-            display.fillRect(0, 8, 12, 8, s4_color);
-        else
-            display.fillRect(0, 8, 6 * strlen(number), 8, dark_grey);
+        size_t number_length = strlen(number);
+        display.fillRect(0, 8, 6 * number_length, 8, get_train_color());
 
         display.printf("%s ", number);
 
         display.setTextColor(grey);
-        if(strlen(direction) <= 10) {
+        size_t direction_length = strlen(direction);
+        if(direction_length < 10 - number_length) {
+            display.setCursor(number_length * 6 + 6, 8);
+            display.print(direction);
+        }
+        else if(strlen(direction) <= 10) {
             display.setCursor(0, 16);
             display.print(direction);
         }
@@ -184,10 +222,10 @@ KVVDeparture departure_list[N_REQUESTED] = {};
 bool redraw_departures = false;
 bool update_succesful = true;
 
-StaticJsonDocument<MAX_JSON_SIZE> doc;
+StaticJsonDocument<50000> doc;
 
 static bool update_departures(void) {
-    uint32_t station_id = 7001530;
+    uint32_t station_id = 7000801;
 
     memset(request_url, 0, sizeof(request_url));
     snprintf(request_url, sizeof(request_url) - 1, request_fmt, station_id, N_REQUESTED);
@@ -207,19 +245,8 @@ static bool update_departures(void) {
     Serial.println(response_code);
 
     Serial.printf("Downloading %u bytes...\n", http.getSize());
-
-    String json = http.getString();
-
-    Serial.printf("Got %u bytes.\n", json.length());
-
-    auto departureIdx = json.lastIndexOf("departureList");
-    json.remove(0, departureIdx - 2);
-    json[0] = '{';
-
-    Serial.print(">>> ");
-    Serial.println(json);
     
-    auto error = deserializeJson(doc, json);
+    auto error = deserializeJson(doc, http.getStream());
     if(error) {
         Serial.print("Deserialization error: ");
         Serial.println(error.f_str());
