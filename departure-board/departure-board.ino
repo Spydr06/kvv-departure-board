@@ -35,7 +35,7 @@ int32_t last_update_time = 0;
 int32_t last_page_switch_time = 0;
 int32_t current_page = N_REQUESTED - 1;
 
-#define MAX_JSON_SIZE (N_REQUESTED * 10000)
+#define MAX_JSON_SIZE (N_REQUESTED * 5000)
 
 MatrixPanel_I2S_DMA display;
  
@@ -182,6 +182,7 @@ const char request_fmt[] PROGMEM = "https://projekte.kvv-efa.de/sl3-alone/XSLT_D
 char request_url[250];
 KVVDeparture departure_list[N_REQUESTED] = {};
 bool redraw_departures = false;
+bool update_succesful = true;
 
 StaticJsonDocument<MAX_JSON_SIZE> doc;
 
@@ -205,11 +206,18 @@ static bool update_departures(void) {
     Serial.print("Response code: ");
     Serial.println(response_code);
 
+    Serial.printf("Downloading %u bytes...\n", http.getSize());
+
     String json = http.getString();
+
+    Serial.printf("Got %u bytes.\n", json.length());
+
     auto departureIdx = json.lastIndexOf("departureList");
     json.remove(0, departureIdx - 2);
     json[0] = '{';
-    // Serial.println(json);
+
+    Serial.print(">>> ");
+    Serial.println(json);
     
     auto error = deserializeJson(doc, json);
     if(error) {
@@ -223,6 +231,8 @@ static bool update_departures(void) {
     for(uint8_t i = 0; i < N_REQUESTED; i++) {
         departure_list[i].parse(departures[i]);
     }
+
+    Serial.printf("JSON parser memory: %zu bytes.\n", doc.memoryUsage());
 
     http.end();
 
@@ -238,9 +248,7 @@ static void display_page_indicator(void) {
         int width = PANEL_WIDTH / N_REQUESTED / 3;
         int pos = i * PANEL_WIDTH / N_REQUESTED + width;
 
-        display.writeLine(pos, PANEL_HEIGHT - 1, pos + width, PANEL_HEIGHT - 1, i == current_page ? white : dark_grey);
-       // display.writePixel(i * PANEL_WIDTH / N_REQUESTED, PANEL_HEIGHT - 1, i == current_page ? white : dark_grey); 
-
+        display.writeLine(pos, PANEL_HEIGHT - 1, pos + width, PANEL_HEIGHT - 1, i == current_page ? (update_succesful ? white : red) : dark_grey);
     }
 }
 
@@ -322,6 +330,6 @@ void loop() {
         last_update_time = millis();
         Serial.println("Updating...");
         //while(!update_departures());
-        update_departures();
+        update_succesful = update_departures();
     }
 }
