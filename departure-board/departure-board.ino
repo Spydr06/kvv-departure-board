@@ -36,7 +36,7 @@ int32_t last_update_time = 0;
 int32_t last_page_switch_time = 0;
 int32_t current_page = N_REQUESTED - 1;
 
-#define MAX_JSON_SIZE (N_REQUESTED * 5000)
+#define MAX_JSON_SIZE 60000
 
 #define STATION_ID_ADDR 0
 
@@ -94,8 +94,9 @@ const uint16_t tram_colors[] = {
 };
 
 const char departure_dbg_print_fmt[] PROGMEM = "In %d (+%d) min.\t(Gleis %s)\t%s\tto %s\n";
+const char info_separator[] PROGMEM = " /// ";
 
-char info_text[100] = "";
+char info_text[1000] = "";
 
 static void replace_umlauts(char* str, size_t length) {
     String s(str);
@@ -106,14 +107,19 @@ static void replace_umlauts(char* str, size_t length) {
     s.replace("ö", "oe");
     s.replace("ü", "ue");
     s.replace("ß", "ss");
+    s.replace("  ", " ");
+    s.trim();
+    if(!s.endsWith(".")) {
+        s += '.';
+    }
     strncpy(str, s.c_str(), length);
 }
 
 static void shorten_direction(char* str, size_t length) {
     String s(str);
-    s.replace("Ä", "A");
-    s.replace("Ö", "O");
-    s.replace("Ü", "U");
+    s.replace("Ä", "Ae");
+    s.replace("Ö", "Oe");
+    s.replace("Ü", "Ue");
     s.replace("ä", "ae");
     s.replace("ö", "oe");
     s.replace("ü", "ue");
@@ -121,6 +127,7 @@ static void shorten_direction(char* str, size_t length) {
     s.replace("Karlsruhe", "KA"); // "Karlsruhe" -> "KA"
     s.replace("Hauptbahnhof", "Hbf");
     s.replace("ß", "ss");
+    s.trim();
     strncpy(str, s.c_str(), length);
 }
 
@@ -135,8 +142,10 @@ struct KVVDeparture {
         countdown = atoi(dep["countdown"]);
         strncpy(platform, dep["platform"], sizeof(platform) - 1);
 
+
         auto line = dep["servingLine"];
         strncpy(number, line["number"], sizeof(number) - 1);
+
         strncpy(direction, line["direction"], sizeof(direction) - 1);
         shorten_direction(direction, sizeof(direction) - 1);
 
@@ -146,8 +155,36 @@ struct KVVDeparture {
             delay = 0;
 
         if(dep.containsKey("lineInfos") && strlen(info_text) == 0) {
-            strncpy(info_text, dep["lineInfos"]["lineInfo"]["infoText"]["subtitle"], sizeof(info_text) - 1);
-            replace_umlauts(info_text, sizeof(info_text) - 1);
+            auto line_infos = dep["lineInfos"];
+            if(line_infos.containsKey("lineInfo")) {
+                const char* input = line_infos["lineInfo"]["infoText"]["subtitle"];
+                const char* wml_input = line_infos["lineInfo"]["infoText"]["wmlText"];
+                if(strlen(wml_input) > 0)
+                    input = wml_input;
+                strncpy(info_text, input, sizeof(info_text) - 1);
+                replace_umlauts(info_text, sizeof(info_text) - 1);
+                return;
+            }
+
+            size_t remaining = sizeof(info_text) - 1;
+            char* info_text_ptr = info_text;
+            auto line_info_arr = line_infos.as<JsonArray>();
+            for(int i = 0; i < line_info_arr.size(); i++) {
+                if(info_text_ptr != info_text && remaining >= sizeof(info_separator)) {
+                    strcat(info_text_ptr, info_separator);
+                    remaining -= sizeof(info_separator) - 1;
+                    info_text_ptr += sizeof(info_separator) - 1;
+                }
+
+                const char* input = line_info_arr[i]["infoText"]["subtitle"];
+                const char* wml_input = line_info_arr[i]["infoText"]["wmlText"];
+                if(strlen(wml_input) > 0)
+                    input = wml_input;
+                strncpy(info_text_ptr, input, remaining);
+                replace_umlauts(info_text_ptr, remaining);
+                remaining -= strlen(info_text_ptr);
+                info_text_ptr += strlen(info_text_ptr);                    
+            }
         }
     }
 
@@ -223,10 +260,10 @@ const char request_fmt[] PROGMEM = "https://projekte.kvv-efa.de/sl3-alone/XSLT_D
 char request_url[250];
 KVVDeparture departure_list[N_REQUESTED] = {};
 bool redraw_departures = false;
-bool update_succesful = true;
+bool update_successful = true;
 uint32_t station_id = 7000801;
 
-StaticJsonDocument<60000> doc;
+StaticJsonDocument<MAX_JSON_SIZE> doc;
 
 Preferences prefs;
 
@@ -261,8 +298,10 @@ static bool update_departures(void) {
         return false;
     }
 
+    
     memset(info_text, 0, sizeof(info_text));
     auto departures = doc["departureList"];
+
     for(uint8_t i = 0; i < N_REQUESTED; i++) {
         departure_list[i].parse(departures[i]);
     }
@@ -283,7 +322,7 @@ static void display_page_indicator(void) {
         int width = PANEL_WIDTH / N_REQUESTED / 3;
         int pos = i * PANEL_WIDTH / N_REQUESTED + width;
 
-        display.writeLine(pos, PANEL_HEIGHT - 1, pos + width, PANEL_HEIGHT - 1, i == current_page ? (update_succesful ? white : red) : dark_grey);
+        display.writeLine(pos, PANEL_HEIGHT - 1, pos + width, PANEL_HEIGHT - 1, i == current_page ? (update_successful ? white : red) : dark_grey);
     }
 }
 
@@ -300,6 +339,7 @@ static void update_task(void* _param) {
             redraw_departures = false;
             display.clearScreen();
             departure_list[current_page].show();
+            display_page_indicator();
             last_scroll_time = 0;
         }
         if(millis() - last_scroll_time > SCROLL_INTERVAL) {
@@ -323,8 +363,12 @@ static void update_task(void* _param) {
 
 static void read_new_station_id(bool* request_update) {
     if(Serial.available()) { 
-        station_id = atoi(Serial.readString().c_str());
+        uint32_t new_station_id = atoi(Serial.readString().c_str());
+        if(new_station_id)
+            station_id = new_station_id;
+        
         prefs.putULong("station_id", station_id);
+
         if(request_update)
             *request_update = true;
     }  
@@ -365,8 +409,10 @@ void setup() {
     display.setCursor(0, 0);
     display.write("updating...");
 
-    while(!update_departures())
+    do {
         read_new_station_id(nullptr);
+    } while(!update_departures());
+        
 
     xTaskCreatePinnedToCore(update_task, "update_task", 10000, NULL, 1, &update_task_handle, 1);
 
@@ -384,7 +430,9 @@ void loop() {
         last_update_time = millis();
         request_update = false;
         Serial.println("Updating...");
-        update_succesful = update_departures();
+        do {
+            read_new_station_id(nullptr);
+        } while(!(update_successful = update_departures()));
     }
 
     read_new_station_id(&request_update);

@@ -1,6 +1,6 @@
 #![feature(let_chains)]
 
-use std::{fmt, collections::HashSet};
+use std::{fmt, collections::HashSet, borrow::BorrowMut};
 use colored::Colorize;
 
 #[derive(Debug, serde::Deserialize)]
@@ -40,46 +40,49 @@ struct KVVLineInfos {
 
 #[derive(Debug, serde::Deserialize)]
 struct KVVDeparture {
-    stopName: String,
-    countdown: String,
-    platform: String,
-    servingLine: KVVServingLine,
-    lineInfos: Option<KVVLineInfos>
+//    stopName: String,
+//    countdown: String,
+//    platform: String,
+//    servingLine: KVVServingLine,
+//    lineInfos: Option<KVVLineInfos>
 }
 
 impl fmt::Display for KVVDeparture {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "In {} ", self.countdown)?;
-        if let Some(delay) = &self.servingLine.delay {
-            if(delay.eq("-9999")) {
+ //       write!(f, "In {} ", self.countdown) // ?;
+/*       if let Some(delay) = &self.servingLine.delay {
+            if delay.eq("-9999") {
                 write!(f, "{}", "** ".bright_red())?;
             }
             else if delay.ne("0") {
                 write!(f, "{}", format!("(+{}) ", delay).yellow())?;
             }
         }
-        write!(f, "min:\t(Gleis {})\t{}", self.platform, self.servingLine)
+        write!(f, "min:\t(Gleis {})\t{}", self.platform, self.servingLine) */
+        Ok(())
     }
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct KVVResponse {
-    departureList: Vec<KVVDeparture>
+    departureList: Option<Vec<KVVDeparture>>
 }
 
 #[tokio::main]
 async fn main() -> Result<(), reqwest::Error> {
     //let station_id = 7001530; 
     let station_id = 7000801;
-    let limit = 100;
+    let limit = 1;
     let request_url = format!("https://projekte.kvv-efa.de/sl3-alone/XSLT_DM_REQUEST?outputFormat=JSON&coordOutputFormat=WGS84[dd.ddddd]&depType=stopEvents&locationServerActive=1&mode=direct&name_dm={station_id}&type_dm=stop&useOnlyStops=1&useRealtime=1&limit={limit}");
 
-    println!(">>> {:?}", request_url);
+    println!("<<< {:?}", request_url);
 
-    let response = reqwest::get(&request_url).await?.json::<KVVResponse>().await?;
-    println!("<<< {:#?}", response);
+    let request_response = reqwest::get(&request_url).await?;
 
-    println!("Departures from {}:", response.departureList.first().unwrap().stopName);
+    let response = request_response.json::<KVVResponse>().await?;
+    println!(">>> {:#?}", response);
+
+/*    println!("Departures from {}:", response.departureList.first().unwrap().stopName);
     for dep in &response.departureList {
         println!("{}", dep);
     }
@@ -95,6 +98,6 @@ async fn main() -> Result<(), reqwest::Error> {
     for info in line_infos {
         println!(">>> {}", info);
     } 
-
+*/
     Ok(())
 }
