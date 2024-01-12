@@ -2,7 +2,7 @@
 
 Some KVV (Karlsruher Verkehrs Verbund) "EFA"-API tests for train schedules and information.
 
-> **Warn**
+> **Note**
 > This API doesn't seem like a permanent solution, it could change at any time completely.
 
 ## Basic API:
