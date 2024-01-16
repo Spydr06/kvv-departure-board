@@ -10,6 +10,12 @@
 
 #define PANEL_WIDTH 64
 #define PANEL_HEIGHT 32
+#define PANEL_CHAIN 2
+
+#if(PANEL_CHAIN > 0)
+    #include <NTPClient.h>
+    #include <WiFiUdp.h>
+#endif
 
 #define PANEL_PIN_A 18
 #define PANEL_PIN_R1 23
@@ -20,7 +26,9 @@
 #define PANEL_PIN_CLK 14
 #define PANEL_PIN_OE 25
 
-#define N_REQUESTED 4
+#define N_REQUESTED 10
+
+#define UTC_TIME_OFFSET 3600
 
 #define SCROLL_INTERVAL 30
 
@@ -36,14 +44,14 @@ int32_t last_update_time = 0;
 int32_t last_page_switch_time = 0;
 int32_t current_page = N_REQUESTED - 1;
 
-#define MAX_JSON_SIZE 60000
+#define MAX_JSON_SIZE 20000
 
 #define STATION_ID_ADDR 0
 
 MatrixPanel_I2S_DMA display;
  
 static void init_display(void) {
-    HUB75_I2S_CFG mx_config(PANEL_WIDTH, PANEL_HEIGHT, 1);
+    HUB75_I2S_CFG mx_config(PANEL_WIDTH, PANEL_HEIGHT, PANEL_CHAIN);
 
     mx_config.gpio.a = PANEL_PIN_A;
     mx_config.gpio.r1 = PANEL_PIN_R1;
@@ -64,7 +72,7 @@ static void init_display(void) {
 const uint16_t black = display.color565(0, 0, 0);
 const uint16_t white = display.color565(255, 255, 255);
 const uint16_t green = display.color565(50, 200, 50);
-const uint16_t red = display.color565(255, 100, 100);
+const uint16_t red = display.color565(255, 50, 50);
 const uint16_t yellow = display.color565(246, 211, 45);
 const uint16_t grey = display.color565(150, 150, 150);
 const uint16_t dark_grey = display.color565(50, 50, 50);
@@ -124,9 +132,10 @@ static void shorten_direction(char* str, size_t length) {
     s.replace("ö", "oe");
     s.replace("ü", "ue");
     s.replace("ß", "ss");
-    s.replace("Karlsruhe", "KA"); // "Karlsruhe" -> "KA"
+    s.replace("Karlsruhe", "KA");
     s.replace("Hauptbahnhof", "Hbf");
-    s.replace("ß", "ss");
+    s.replace("Bahnhof", "Bf");
+    s.replace("ueber", ">");
     s.trim();
     strncpy(str, s.c_str(), length);
 }
@@ -142,9 +151,10 @@ struct KVVDeparture {
         countdown = atoi(dep["countdown"]);
         strncpy(platform, dep["platform"], sizeof(platform) - 1);
 
-
         auto line = dep["servingLine"];
         strncpy(number, line["number"], sizeof(number) - 1);
+        if(number[strlen(number) - 1] == ' ')
+            number[strlen(number) - 1] = '\0';
 
         strncpy(direction, line["direction"], sizeof(direction) - 1);
         shorten_direction(direction, sizeof(direction) - 1);
@@ -188,11 +198,11 @@ struct KVVDeparture {
         }
     }
 
-    void dbg_print() {
+    void dbg_print(void) {
         Serial.printf(departure_dbg_print_fmt, countdown, delay, platform, number, direction);
     }
 
-    uint16_t get_train_color() {
+    uint16_t get_train_color(void) {
         if(number[0] == 'S' && isdigit(number[1])) {
             return sbahn_colors[number[1] - '1'];
         }
@@ -203,7 +213,7 @@ struct KVVDeparture {
         return dark_grey;
     }
 
-    void show() {
+    void show_countdown(void) {
         display.setCursor(0, 0);
         display.setTextColor(white);
 
@@ -219,7 +229,7 @@ struct KVVDeparture {
                 break;
             case -9999:
                 display.setTextColor(red);
-                display.print('*');
+                display.print("(!!)");
                 break;
             default:
                 display.setTextColor(yellow);
@@ -230,28 +240,17 @@ struct KVVDeparture {
         display.setTextColor(white);
         if(countdown > 0)
             display.print(" min");
+    }
 
-        display.setCursor(0, 8);
+    void show(uint32_t x, uint32_t y) {
+        display.setCursor(x, y);
         size_t number_length = strlen(number);
-        display.fillRect(0, 8, 6 * number_length, 8, get_train_color());
+        display.fillRect(x, y, 6 * number_length, 8, get_train_color());
 
         display.printf("%s ", number);
 
         display.setTextColor(grey);
-        size_t direction_length = strlen(direction);
-        if(direction_length < 10 - number_length) {
-            display.setCursor(number_length * 6 + 6, 8);
-            display.print(direction);
-        }
-        else if(strlen(direction) <= 10) {
-            display.setCursor(0, 16);
-            display.print(direction);
-        }
-        else {
-            display.setTextWrap(true);
-            display.print(direction);
-            display.setTextWrap(false);
-        }
+        display.print(direction);
     }
 };
 
@@ -264,6 +263,11 @@ bool update_successful = true;
 uint32_t station_id = 7000801;
 
 StaticJsonDocument<MAX_JSON_SIZE> doc;
+
+#if(PANEL_CHAIN > 0)
+    WiFiUDP udp_socket;
+    NTPClient ntp_client(udp_socket, "pool.ntp.org");
+#endif
 
 Preferences prefs;
 
@@ -281,7 +285,6 @@ static bool update_departures(void) {
     if(response_code <= 0) {
         Serial.print("Error code: ");
         Serial.println(response_code);
-        snprintf(info_text, sizeof(info_text) - 1, "HTTP Error Code: %d", response_code);
         return false;
     }
 
@@ -289,22 +292,23 @@ static bool update_departures(void) {
     Serial.println(response_code);
 
     Serial.printf("Downloading %u bytes...\n", http.getSize());
-    
-    auto error = deserializeJson(doc, http.getStream());
-    if(error) {
-        Serial.print("Deserialization error: ");
-        Serial.println(error.f_str());
-        snprintf(info_text, sizeof(info_text) - 1, "Deserialization Error: %s", error.c_str());
+
+    auto& stream = http.getStream();
+    if(!stream.find("\"departureList\":")) {
+        Serial.println("ERROR: no departureList found!");
         return false;
     }
 
-    
-    memset(info_text, 0, sizeof(info_text));
-    auto departures = doc["departureList"];
-
-    for(uint8_t i = 0; i < N_REQUESTED; i++) {
-        departure_list[i].parse(departures[i]);
-    }
+    stream.find("[");
+    uint8_t i = 0;
+    do {
+        if(auto err = deserializeJson(doc, stream)) {
+            Serial.print("Deserialization error: ");
+            Serial.println(err.f_str());
+            return false;
+        }
+        departure_list[i].parse(doc.as<JsonObject>());
+    } while (i++ <= N_REQUESTED && stream.findUntil(",", "]"));
 
     Serial.printf("JSON parser memory: %zu bytes.\n", doc.memoryUsage());
 
@@ -319,12 +323,36 @@ static bool update_departures(void) {
 
 static void display_page_indicator(void) {
     for(int i = 0; i < N_REQUESTED; i++) {
-        int width = PANEL_WIDTH / N_REQUESTED / 3;
-        int pos = i * PANEL_WIDTH / N_REQUESTED + width;
+        int width = (PANEL_WIDTH * PANEL_CHAIN) / N_REQUESTED / 3;
+        int pos = i * (PANEL_WIDTH * PANEL_CHAIN) / N_REQUESTED + width;
 
-        display.writeLine(pos, PANEL_HEIGHT - 1, pos + width, PANEL_HEIGHT - 1, i == current_page ? (update_successful ? white : red) : dark_grey);
+        display.writeFastHLine(pos, PANEL_HEIGHT - 1, width, i == current_page ? (update_successful ? white : red) : dark_grey);
     }
 }
+
+#if(PANEL_CHAIN > 0)
+
+static void display_time(void) {
+    int width = 6 * 5;
+    int pos = PANEL_WIDTH * PANEL_CHAIN - width;
+    display.setTextColor(orange);
+    
+#define FMT_STR "%2d:%02d"
+    display.setCursor(pos, 0);
+    display.printf(FMT_STR, ntp_client.getHours(), ntp_client.getMinutes());
+    display.setCursor(pos + 1, 0);
+    display.printf(FMT_STR, ntp_client.getHours(), ntp_client.getMinutes());
+#undef FMT_STR
+}
+
+static void display_upcoming_departure(void) {
+    display.setCursor(0, 16);
+    display.setTextColor(white);
+    auto& departure = departure_list[(current_page + 1) % N_REQUESTED];
+    departure.show(0, 16);
+}
+
+#endif
 
 TaskHandle_t update_task_handle;
 
@@ -338,8 +366,14 @@ static void update_task(void* _param) {
         if(redraw_departures) {
             redraw_departures = false;
             display.clearScreen();
-            departure_list[current_page].show();
+            auto& departure = departure_list[current_page];
+            departure.show_countdown();
+            departure.show(0, 8);
             display_page_indicator();
+#if(PANEL_CHAIN > 0)
+            display_time();
+            display_upcoming_departure();
+#endif
             last_scroll_time = 0;
         }
         if(millis() - last_scroll_time > SCROLL_INTERVAL) {
@@ -347,7 +381,7 @@ static void update_task(void* _param) {
             int32_t text_len = strlen(info_text);
             if(text_len > 0) {
                 display.setCursor(scroll_offset--, 24);
-                display.fillRect(0, PANEL_HEIGHT - 8, PANEL_WIDTH, 8, black);
+                display.fillRect(0, PANEL_HEIGHT - 8, (PANEL_WIDTH * PANEL_CHAIN), 8, black);
 
                 display_page_indicator();
 
@@ -355,7 +389,7 @@ static void update_task(void* _param) {
                 display.print(info_text);
 
                 if(scroll_offset < text_len * -6)
-                    scroll_offset = PANEL_WIDTH;
+                    scroll_offset = (PANEL_WIDTH * PANEL_CHAIN);
             }
         }
     }
@@ -409,10 +443,15 @@ void setup() {
     display.setCursor(0, 0);
     display.write("updating...");
 
+#if(PANEL_CHAIN > 0)
+    ntp_client.begin();
+    ntp_client.setTimeOffset(UTC_TIME_OFFSET);
+    ntp_client.update();
+#endif
+
     do {
         read_new_station_id(nullptr);
     } while(!update_departures());
-        
 
     xTaskCreatePinnedToCore(update_task, "update_task", 10000, NULL, 1, &update_task_handle, 1);
 
