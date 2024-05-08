@@ -82,6 +82,12 @@ The default display configuration is as follows:
 => Totalling 128x32 px.
 ```
 
+### Station Configuration
+
+Once you successfuly uploaded the code, you can use the serial console to enter a 7-digit station id.
+
+You can obtain the station id by running a `XSLT_STOPFINDER_REQUEST` with the clear-text station name in your browser.
+
 ## Rust Test implementation:
 
 > [!IMPORTANT]
