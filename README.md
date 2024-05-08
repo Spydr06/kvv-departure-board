@@ -76,7 +76,7 @@ The default display configuration is as follows:
 
 ```
 +---------------+---------------+
-| 32x64px HUB75 | 32x64px HUB75 |
+| 32x64px HUB75 | 32x64px HUB75 | <--- ESP32
 +---------------+---------------+
 
 => Totalling 128x32 px.
