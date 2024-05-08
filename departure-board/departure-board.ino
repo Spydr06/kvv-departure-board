@@ -61,12 +61,14 @@ static void init_display(void) {
     mx_config.gpio.g2 = PANEL_PIN_G2;
     mx_config.gpio.clk = PANEL_PIN_CLK;
     mx_config.gpio.oe = PANEL_PIN_OE;
+    mx_config.clkphase = false;
 
     display = MatrixPanel_I2S_DMA(mx_config);
     display.begin();
     display.setBrightness(255);
     display.clearScreen();
     display.setLatBlanking(2);
+    
 }
 
 const uint16_t black = display.color565(0, 0, 0);
